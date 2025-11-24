@@ -1,0 +1,9 @@
+torch>=2.0.0
+torchvision>=0.15.1
+timm>=0.5.4
+numpy>=1.22.3
+pyyaml
+tensorboard
+tqdm
+
+
