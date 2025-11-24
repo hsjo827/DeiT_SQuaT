@@ -13,7 +13,7 @@ python train_squat.py \
     --num-classes 100 \
     --img-size 224 \
     --batch-size 128 \
-    --epochs 300 \
+    --epochs 100 \
     --opt adamw \
     --lr 0.001 \
     --weight-decay 0.05 \

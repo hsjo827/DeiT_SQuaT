@@ -15,7 +15,7 @@ model_type: 'deit'
 img_size: 224  # Use 224x224 for ImageNet pretrained compatibility
 teacher: 'deit_small_distilled_patch16_224'
 teacher_pretrained: true  # Use ImageNet pretrained weights for teacher
-teacher_checkpoint: ''  # Optional: path to fine-tuned teacher checkpoint
+teacher_checkpoint: '/Users/hyeonsik/Documents/GitHub/DeiT_SQuaT/outputs/teacher/20251124-041830-deit_small_distilled_patch16_224-teacher/best.pth.tar'  # Optional: path to fine-tuned teacher checkpoint
 
 # Training settings
 batch_size: 128

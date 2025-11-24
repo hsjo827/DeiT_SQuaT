@@ -263,7 +263,13 @@ def create_teacher_model_squat(args, is_cifar=False):
     
     # Load pretrained weights if needed
     if args.teacher_checkpoint:
-        load_checkpoint(teacher, args.teacher_checkpoint, strict=True)
+        _logger.info(f"Loading teacher checkpoint from {args.teacher_checkpoint}")
+        checkpoint = torch.load(args.teacher_checkpoint, map_location='cpu')
+        if isinstance(checkpoint, dict) and 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        else:
+            state_dict = checkpoint
+        teacher.load_state_dict(state_dict, strict=True)
     elif args.teacher_pretrained:
         # Teacher will use ImageNet pretrained weights (loaded in deit.py)
         pass
@@ -719,7 +725,12 @@ def main(local_rank, args):
     # Load additional checkpoint if specified (after teacher initialization, before quantization)
     if args.initial_checkpoint:
         _logger.info(f"Loading additional checkpoint from {args.initial_checkpoint}")
-        load_checkpoint(model, args.initial_checkpoint, strict=False)
+        checkpoint = torch.load(args.initial_checkpoint, map_location='cpu')
+        if isinstance(checkpoint, dict) and 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        else:
+            state_dict = checkpoint
+        model.load_state_dict(state_dict, strict=False)
     
     # Quantize student model (after weight initialization)
     if args.wq_enable or args.aq_enable:
