@@ -19,7 +19,7 @@ class QLinear(nn.Linear):
         self.aq_learnable = aq_learnable
         self.wq_learnable = wq_learnable
         self.symmetric = symmetric
-        self.weight_channelwise = weight_channelwise # not gonna used atm
+        self.weight_channelwise = weight_channelwise 
         self.input_channelwise = input_channelwise
         self.weight_quant_method = weight_quant_method
         self.input_quant_method = input_quant_method
@@ -37,25 +37,21 @@ class QLinear(nn.Linear):
         self.move_b4 = LearnableBias(self.weight.shape[1])
         self.move_aft = LearnableBias(self.weight.shape[1])
         
-        # SQuaT: Flag to save quantized input for feature distillation
         self.save_quantized_input = False
         self.saved_quantized_input = None
 
     def forward(self, input):
 
-        # quantize weight
         if self.weight_quant_method == 'statsq':
             weight = self.statsq_fn(self.weight)
         else:
             raise ValueError("Unknown quant_method")    
-        # quantize input
-        input = self.move_b4(input)
-        input_quantized = self.input_quant_fn(input)  # input_bits로 양자화된 값
         
-        # SQuaT: Save quantized input (before move_aft) if flag is set
-        # This ensures saved value is exactly quantized with input_bits (matching MLPR pattern)
+        input = self.move_b4(input)
+        input_quantized = self.input_quant_fn(input)  
+        
         if self.save_quantized_input:
-            self.saved_quantized_input = input_quantized.clone()  # input_bits bit로 양자화된 값
+            self.saved_quantized_input = input_quantized.clone()  
         
         input = self.move_aft(input_quantized)
         out = nn.functional.linear(input, weight)

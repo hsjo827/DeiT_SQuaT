@@ -1,6 +1,6 @@
 torch>=2.0.0
 torchvision>=0.15.1
-timm>=0.5.4
+timm==0.4.12
 numpy>=1.22.3
 pyyaml
 tensorboard

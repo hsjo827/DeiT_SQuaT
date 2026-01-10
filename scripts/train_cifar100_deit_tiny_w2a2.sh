@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Training script for CIFAR-100 with OFQ + SQuaT (DeiT-Tiny, W2A2: 2-bit weight, 2-bit activation)
+# Training script for CIFAR-100 with SQuaT (DeiT-Tiny, W2A2: 2-bit weight, 2-bit activation)
 
 CONFIG_FILE="configs/cifar100_deit_tiny_squat.yml"
 DATA_DIR="./data/CIFAR100"
@@ -13,7 +13,7 @@ python train_squat.py \
     --num-classes 100 \
     --img-size 224 \
     --batch-size 128 \
-    --epochs 100 \
+    --epochs 300 \
     --opt adamw \
     --lr 0.001 \
     --weight-decay 0.05 \

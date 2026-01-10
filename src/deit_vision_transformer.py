@@ -50,8 +50,6 @@ def _cfg(url='', **kwargs):
     }
 
 class Mlp(nn.Module):
-    """ MLP as used in Vision Transformer, MLP-Mixer and related networks
-    """
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
         self.in_features = in_features
@@ -99,7 +97,7 @@ class Attention(nn.Module):
     def forward(self, x):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv.unbind(0)   
 
         if self.qqkkvv:
             q_score = torch.matmul(q, q.transpose(-1, -2))
@@ -139,7 +137,6 @@ class Block(nn.Module):
             self.norm1 = torch.nn.Identity()
 
         self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, qqkkvv = qqkkvv)
-        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         if norm_layer != None:
             self.norm2 = norm_layer(dim, elementwise_affine= LN_affine)
@@ -150,14 +147,12 @@ class Block(nn.Module):
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
         self.qqkkvv = qqkkvv
         
-        # For SQuaT: save activation for feature distillation
         self.is_last_block = False
-        self.saved_act_attn = None  # Saved attention output
+        self.saved_act_attn = None  
 
     def forward(self, x):            
         if self.qqkkvv:
             temp_x, attn_mtrx = self.attn(self.norm1(x))
-            # Save attention output for SQuaT (teacher model)
             if self.is_last_block and hasattr(self, 'is_last_block'):
                 self.saved_act_attn = temp_x.detach().clone()
             x = x + self.drop_path(temp_x)
@@ -165,7 +160,6 @@ class Block(nn.Module):
             return x, attn_mtrx
         else:
             temp_x, _ = self.attn(self.norm1(x))
-            # Save attention output for SQuaT (teacher model)
             if self.is_last_block and hasattr(self, 'is_last_block'):
                 self.saved_act_attn = temp_x.detach().clone()
             x = x + self.drop_path(temp_x)
@@ -175,20 +169,11 @@ class Block(nn.Module):
 
 
 class VisionTransformer(nn.Module):
-    """ Vision Transformer
-
-    A PyTorch impl of : `An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale`
-        - https://arxiv.org/abs/2010.11929
-
-    Includes distillation token & head support for `DeiT: Data-efficient Image Transformers`
-        - https://arxiv.org/abs/2012.12877
-    """
 
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=True, representation_size=None, distilled=False,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., embed_layer=PatchEmbed, norm_layer=None,
                  act_layer=None, weight_init='', qqkkvv = False,  LN_affine = True,
-                 # SQuaT parameters
                  model_type='student', QFeatureFlag=False, feature_levels=2, use_adaptor=False, 
                  use_adaptor_bn=False, use_student_quant_params=True):
         """
@@ -213,15 +198,12 @@ class VisionTransformer(nn.Module):
         """
         super().__init__()
         self.num_classes = num_classes
-        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.num_features = self.embed_dim = embed_dim
         self.num_tokens = 2 if distilled else 1
-        # norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
-        # act_layer = act_layer or nn.GELU
         norm_layer = norm_layer 
         act_layer = act_layer
         self.qqkkvv = qqkkvv
         
-        # SQuaT parameters
         self.model_type = model_type
         self.QFeatureFlag = QFeatureFlag
 
@@ -234,14 +216,13 @@ class VisionTransformer(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + self.num_tokens, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
 
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  
         self.blocks = nn.Sequential(*[
             Block(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, drop=drop_rate,
                 attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, act_layer=act_layer, qqkkvv =self.qqkkvv,  LN_affine =  LN_affine)
             for i in range(depth)])
         
-        # Mark last block for SQuaT
         if self.model_type == 'teacher':
             self.blocks[-1].is_last_block = True
         
@@ -250,7 +231,6 @@ class VisionTransformer(nn.Module):
         else:
             self.norm = norm_layer(embed_dim)
 
-        # Representation layer
         if representation_size and not distilled:
             self.num_features = representation_size
             self.pre_logits = nn.Sequential(OrderedDict([
@@ -260,13 +240,11 @@ class VisionTransformer(nn.Module):
         else:
             self.pre_logits = nn.Identity()
 
-        # Classifier head(s)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
         self.head_dist = None
         if distilled:
             self.head_dist = nn.Linear(self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
-        # SQuaT: Feature Quantizer for Teacher
         if self.model_type == 'teacher' and self.QFeatureFlag:
             try:
                 from src.quantization.modules.feature_quant_module import FeatureQuantizerViT
@@ -275,7 +253,6 @@ class VisionTransformer(nn.Module):
                 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 from src.quantization.modules.feature_quant_module import FeatureQuantizerViT
             
-            # Create args object for FeatureQuantizer
             class Args:
                 def __init__(self):
                     self.feature_levels = feature_levels
@@ -284,14 +261,12 @@ class VisionTransformer(nn.Module):
             self.feature_quantizer = FeatureQuantizerViT(args)
             print("Added Teacher FeatureQuantizer")
         
-        # SQuaT: Adaptor for Student
         if self.model_type == 'student' and use_adaptor:
             self.adaptor = self._build_adaptor(embed_dim, use_adaptor_bn)
             print("Added Student Adaptor")
         else:
             self.adaptor = None
         
-        # For storing quantized activation (student)
         self.qact = None
         self.saved_qact = None
 
@@ -304,14 +279,12 @@ class VisionTransformer(nn.Module):
         if self.dist_token is not None:
             trunc_normal_(self.dist_token, std=.02)
         if mode.startswith('jax'):
-            # leave cls token as zeros to match jax impl
             named_apply(partial(_init_vit_weights, head_bias=head_bias, jax_impl=True), self)
         else:
             trunc_normal_(self.cls_token, std=.02)
             self.apply(_init_vit_weights)
 
     def _init_weights(self, m):
-        # this fn left here for compat with downstream users
         _init_vit_weights(m)
 
     @torch.jit.ignore
@@ -331,7 +304,6 @@ class VisionTransformer(nn.Module):
             self.head_dist = nn.Linear(self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
     def _build_adaptor(self, dim, use_bn=False):
-        """Build adaptor for matching student and teacher features"""
         layers = [nn.Linear(dim, dim, bias=False)]
         if use_bn:
             layers.append(nn.BatchNorm1d(dim))
@@ -339,7 +311,7 @@ class VisionTransformer(nn.Module):
     
     def forward_features(self, x, is_feat=False, quant_params=None):
         x = self.patch_embed(x)
-        cls_token = self.cls_token.expand(x.shape[0], -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1) 
         if self.dist_token is None:
             x = torch.cat((cls_token, x), dim=1)
         else:
@@ -355,53 +327,42 @@ class VisionTransformer(nn.Module):
 
         x = self.norm(x)
         
-        # SQuaT: Extract features for distillation
         fd_map = None
         if is_feat:
             if self.model_type == 'student':
-                # Extract quantized activation from last block's attention
                 last_block = self.blocks[-1]
                 if hasattr(last_block, 'attn'):
                     attn = last_block.attn
-                    # Check if it's a quantized attention module
                     if hasattr(attn, 'saved_qact') and attn.saved_qact is not None:
-                        # Use saved quantized activation (B, N, C), take cls token
-                        qact = attn.saved_qact[:, 0, :]  # B, C
+                        qact = attn.saved_qact[:, 0, :]  
                         self.qact = qact
                         fd_map = self.adaptor(qact) if self.adaptor is not None else qact
                     else:
-                        # Fallback: use intermediate feature
                         if len(intermediate_features) > 0:
-                            feat = intermediate_features[-1][:, 0, :]  # B, C
+                            feat = intermediate_features[-1][:, 0, :] 
                             self.qact = feat
                             fd_map = self.adaptor(feat) if self.adaptor is not None else feat
                 else:
-                    # Fallback: use intermediate feature
                     if len(intermediate_features) > 0:
-                        feat = intermediate_features[-1][:, 0, :]  # B, C
+                        feat = intermediate_features[-1][:, 0, :]  
                         self.qact = feat
                         fd_map = self.adaptor(feat) if self.adaptor is not None else feat
                     
             elif self.model_type == 'teacher':
-                # Extract feature from last block
                 last_block = self.blocks[-1]
                 if hasattr(last_block, 'saved_act_attn') and last_block.saved_act_attn is not None:
-                    # Use saved attention output (B, N, C), take cls token
-                    feat_t = last_block.saved_act_attn[:, 0, :]  # B, C
+                    feat_t = last_block.saved_act_attn[:, 0, :]  
                 else:
-                    # Fallback to intermediate feature
                     if len(intermediate_features) > 0:
-                        feat_t = intermediate_features[-1][:, 0, :]  # B, C
+                        feat_t = intermediate_features[-1][:, 0, :]  
                     else:
-                        feat_t = x[:, 0, :]  # B, C
+                        feat_t = x[:, 0, :]  
                 
-                # Quantize teacher feature using student's parameters
                 if self.QFeatureFlag and hasattr(self, 'feature_quantizer'):
-                    # Feature quantizer expects (B, N, C) or (B, C), add sequence dimension if needed
-                    if len(feat_t.shape) == 2:  # (B, C)
-                        feat_t = feat_t.unsqueeze(1)  # (B, 1, C)
-                    fd_map = self.feature_quantizer(feat_t, quant_params=quant_params)  # B, 1, C
-                    fd_map = fd_map.squeeze(1) if fd_map.shape[1] == 1 else fd_map  # B, C
+                    if len(feat_t.shape) == 2: 
+                        feat_t = feat_t.unsqueeze(1)  
+                    fd_map = self.feature_quantizer(feat_t, quant_params=quant_params)  
+                    fd_map = fd_map.squeeze(1) if fd_map.shape[1] == 1 else fd_map  
                 else:
                     fd_map = feat_t
         
@@ -418,7 +379,6 @@ class VisionTransformer(nn.Module):
         x = self.forward_features(x, is_feat=is_feat, quant_params=quant_params)
         
         if is_feat:
-            # Return features for distillation
             if self.head_dist is not None:
                 cls_x, x_dist = self.head(x[0]), self.head_dist(x[1])
                 fd_map = x[4] if len(x) > 4 else None
@@ -428,14 +388,11 @@ class VisionTransformer(nn.Module):
                 fd_map = x[3] if len(x) > 3 else None
                 return cls_x, x[1], x[2], fd_map
         
-        # Normal forward
         if self.head_dist is not None:
-            cls_x, x_dist = self.head(x[0]), self.head_dist(x[1])  # x must be a tuple
+            cls_x, x_dist = self.head(x[0]), self.head_dist(x[1])  
             if self.training and not torch.jit.is_scripting():
-                # training mode: return tuple (cls_x, x_dist)
                 return (cls_x, x_dist), x[2]
             else:
-                # eval mode: return average of both classifier predictions
                 return (cls_x + x_dist) / 2, x[2]
         else:
             cls_x = self.head(x[0])
@@ -443,11 +400,7 @@ class VisionTransformer(nn.Module):
 
 
 def _init_vit_weights(module: nn.Module, name: str = '', head_bias: float = 0., jax_impl: bool = False):
-    """ ViT weight initialization
-    * When called without n, head_bias, jax_impl args it will behave exactly the same
-      as my original init for compatibility with prev hparam / downstream use cases (ie DeiT).
-    * When called w/ valid n (module name) and jax_impl=True, will (hopefully) match JAX impl
-    """
+
     if isinstance(module, nn.Linear):
         if name.startswith('head'):
             nn.init.zeros_(module.weight)
@@ -468,7 +421,6 @@ def _init_vit_weights(module: nn.Module, name: str = '', head_bias: float = 0., 
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
     elif jax_impl and isinstance(module, nn.Conv2d):
-        # NOTE conv was left to pytorch default in my original init
         lecun_normal_(module.weight)
         if module.bias is not None:
             nn.init.zeros_(module.bias)
@@ -480,8 +432,7 @@ def _init_vit_weights(module: nn.Module, name: str = '', head_bias: float = 0., 
 
 @torch.no_grad()
 def _load_weights(model: VisionTransformer, checkpoint_path: str, prefix: str = ''):
-    """ Load weights from .npz checkpoints for official Google Brain Flax implementation
-    """
+
     import numpy as np
 
     def _n2p(w, t=True):
@@ -501,7 +452,6 @@ def _load_weights(model: VisionTransformer, checkpoint_path: str, prefix: str = 
         prefix = 'opt/target/'
 
     if hasattr(model.patch_embed, 'backbone'):
-        # hybrid
         backbone = model.patch_embed.backbone
         stem_only = not hasattr(backbone, 'stem')
         stem = backbone if stem_only else backbone.stem
@@ -529,7 +479,7 @@ def _load_weights(model: VisionTransformer, checkpoint_path: str, prefix: str = 
     model.cls_token.copy_(_n2p(w[f'{prefix}cls'], t=False))
     pos_embed_w = _n2p(w[f'{prefix}Transformer/posembed_input/pos_embedding'], t=False)
     if pos_embed_w.shape != model.pos_embed.shape:
-        pos_embed_w = resize_pos_embed(  # resize pos embedding when different size from pretrained weights
+        pos_embed_w = resize_pos_embed(  
             pos_embed_w, model.pos_embed, getattr(model, 'num_tokens', 1), model.patch_embed.grid_size)
     model.pos_embed.copy_(pos_embed_w)
     model.norm.weight.copy_(_n2p(w[f'{prefix}Transformer/encoder_norm/scale']))
@@ -569,7 +519,7 @@ def resize_pos_embed(posemb, posemb_new, num_tokens=1, gs_new=()):
     else:
         posemb_tok, posemb_grid = posemb[:, :0], posemb[0]
     gs_old = int(math.sqrt(len(posemb_grid)))
-    if not len(gs_new):  # backwards compatibility
+    if not len(gs_new):  
         gs_new = [int(math.sqrt(ntok_new))] * 2
     assert len(gs_new) >= 2
     _logger.info('Position embedding grid-size from %s to %s', [gs_old, gs_old], gs_new)
@@ -581,18 +531,14 @@ def resize_pos_embed(posemb, posemb_new, num_tokens=1, gs_new=()):
 
 
 def checkpoint_filter_fn(state_dict, model):
-    """ convert patch embedding weight from manual patchify + linear proj to conv"""
     out_dict = {}
     if 'model' in state_dict:
-        # For deit models
         state_dict = state_dict['model']
     for k, v in state_dict.items():
         if 'patch_embed.proj.weight' in k and len(v.shape) < 4:
-            # For old models that I trained prior to conv based patchification
             O, I, H, W = model.patch_embed.proj.weight.shape
             v = v.reshape(O, -1, H, W)
         elif k == 'pos_embed' and v.shape != model.pos_embed.shape:
-            # To resize pos embedding when using model at different size from pretrained weights
             v = resize_pos_embed(
                 v, model.pos_embed, getattr(model, 'num_tokens', 1), model.patch_embed.grid_size)
         out_dict[k] = v

@@ -1,7 +1,3 @@
-"""
-CIFAR-10 Dataset Loader for OFQ_SQuaT
-Adapted from MLPR/CIFAR
-"""
 from __future__ import print_function
 
 import os
@@ -10,12 +6,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from PIL import Image
 
-"""
-The CIFAR-10 dataset consists of 60000 32x32 colour images in 10 classes, with 6000 images per class. 
-There are 50,000 training images and 10,000 test images.
-"""
 
-# Standard CIFAR-10 transforms with Resize to 224x224 for ImageNet pretrained models
 transform_train = transforms.Compose([
     transforms.Resize(256),
     transforms.RandomCrop(224),
@@ -33,16 +24,7 @@ transform_test = transforms.Compose([
 
 
 def get_cifar10_dataloaders(data_folder="./data/CIFAR10", download=True):
-    """
-    Get CIFAR-10 train and test datasets
-    
-    Args:
-        data_folder: Path to CIFAR-10 data folder
-        download: Whether to download if not exists
-    
-    Returns:
-        train_dataset, test_dataset
-    """
+
     train_dataset = datasets.CIFAR10(
         root=data_folder,
         train=True, 
@@ -62,20 +44,7 @@ def get_cifar10_dataloaders(data_folder="./data/CIFAR10", download=True):
 
 def get_cifar10_dataloaders_sample(data_folder="./data/CIFAR10", k=4096, mode='exact', 
                                     is_sample=True, percent=1.0, download=True):
-    """
-    Get CIFAR-10 datasets with instance sampling (for CRD/CRDST)
-    
-    Args:
-        data_folder: Path to CIFAR-10 data folder
-        k: Number of negative samples
-        mode: 'exact' or 'relax'
-        is_sample: Whether to sample
-        percent: Percentage of negative samples
-        download: Whether to download if not exists
-    
-    Returns:
-        train_dataset, test_dataset
-    """
+
     class CIFAR10InstanceSample(datasets.CIFAR10):
         def __init__(self, root, train=True, transform=None, target_transform=None,
                      download=False, k=4096, mode='exact', is_sample=True, percent=1.0): 
@@ -129,7 +98,6 @@ def get_cifar10_dataloaders_sample(data_folder="./data/CIFAR10", k=4096, mode='e
             if not self.is_sample:
                 return img, target, index
             else:
-                # sample contrastive examples
                 if self.mode == 'exact':
                     pos_idx = index
                 elif self.mode == 'relax':

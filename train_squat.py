@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Training script for OFQ + SQuaT (Oscillation-free Quantization with Student Quantized Activation Feature Distillation)
-"""
+
 import argparse
 import sys
 import time
@@ -27,15 +25,9 @@ from timm.loss import LabelSmoothingCrossEntropy
 from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler
 
-# Import OFQ modules and custom DeiT models
-# Set up path for importing custom modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import custom DeiT models to register them with timm
-# This ensures that create_model() uses our custom models instead of timm's default
-# CRITICAL: Without this import, timm's default models will be used, causing
-# weight loading compatibility issues during student model training
-import src.deit  # noqa: F401 - Import to register models with timm
+import src.deit  
 
 from src.quantization.modules.utils import replace_module_by_qmodule_deit
 from utils_squat import (
@@ -49,7 +41,6 @@ import math
 torch.backends.cudnn.benchmark = True
 _logger = logging.getLogger('train')
 
-# Config parser
 config_parser = parser = argparse.ArgumentParser(description='Training Config', add_help=False)
 parser.add_argument('-c', '--config', default='', type=str, metavar='FILE',
                     help='YAML config file specifying default arguments')
@@ -104,7 +95,7 @@ parser.add_argument('--min-lr', type=float, default=1e-5, metavar='LR',
 parser.add_argument('--warmup-epochs', type=int, default=5, metavar='N',
                     help='epochs to warmup LR')
 
-# Quantization parameters (OFQ)
+# Quantization parameters 
 parser.add_argument('--wq-enable', action='store_true', default=False,
                     help='enable weight quantization')
 parser.add_argument('--wq-mode', default='statsq', type=str,
@@ -182,11 +173,9 @@ def parse_args():
     if args.qmodules is None:
         args.qmodules = []
     
-    # Handle aliases
     if hasattr(args, 'feature_distill_loss_type') and args.feature_distill_loss_type:
         args.distill_loss = args.feature_distill_loss_type
     
-    # Ensure distill_loss has a default value
     if not hasattr(args, 'distill_loss') or args.distill_loss is None:
         args.distill_loss = 'L2'
     
@@ -247,21 +236,17 @@ def create_teacher_model_squat(args, is_cifar=False):
     """Create teacher model for SQuaT"""
     from src.deit_vision_transformer import VisionTransformer
     
-    # First create base model using timm (without SQuaT params)
     teacher_kwargs = {
         'num_classes': args.num_classes,
         'drop_rate': 0.0,
-        'pretrained': args.teacher_pretrained,  # Use pretrained for ImageNet weights
+        'pretrained': args.teacher_pretrained,  
     }
     
-    # Add img_size for CIFAR (use 224x224 for ImageNet pretrained compatibility)
     if is_cifar:
         teacher_kwargs['img_size'] = 224
     
-    # Create base model
     teacher = create_model(args.teacher, **teacher_kwargs)
     
-    # Load pretrained weights if needed
     if args.teacher_checkpoint:
         _logger.info(f"Loading teacher checkpoint from {args.teacher_checkpoint}")
         checkpoint = torch.load(args.teacher_checkpoint, map_location='cpu')
@@ -271,10 +256,8 @@ def create_teacher_model_squat(args, is_cifar=False):
             state_dict = checkpoint
         teacher.load_state_dict(state_dict, strict=True)
     elif args.teacher_pretrained:
-        # Teacher will use ImageNet pretrained weights (loaded in deit.py)
         pass
     
-    # Now manually set SQuaT parameters
     teacher.model_type = 'teacher'
     teacher.QFeatureFlag = args.QFeatureFlag
     teacher.feature_levels = args.feature_levels
@@ -282,7 +265,6 @@ def create_teacher_model_squat(args, is_cifar=False):
     teacher.use_adaptor_bn = False
     teacher.use_student_quant_params = args.QFeatureFlag
     
-    # Initialize SQuaT components if needed
     if args.QFeatureFlag:
         try:
             from src.quantization.modules.feature_quant_module import FeatureQuantizerViT
@@ -296,19 +278,13 @@ def create_teacher_model_squat(args, is_cifar=False):
         except Exception as e:
             _logger.warning(f"Failed to create FeatureQuantizer: {e}")
     
-    # Add forward method wrapper to support is_feat if needed
     if not hasattr(teacher, '_original_forward'):
         teacher._original_forward = teacher.forward
         
-        # 1. Define Hook to capture attention feature
         teacher.last_attn_feat = None
         def hook_fn(module, input):
-            # input is a tuple (tensor,), we want the tensor [B, N, C]
-            # This captures the feature BEFORE projection (Context Vector), matching Student's saved_qact
             teacher.last_attn_feat = input[0]
             
-        # 2. Register Hook to the last block's attention projection layer
-        # DeiT structure: model.blocks[i].attn.proj
         if hasattr(teacher, 'blocks') and len(teacher.blocks) > 0:
             last_block = teacher.blocks[-1]
             if hasattr(last_block, 'attn') and hasattr(last_block.attn, 'proj'):
@@ -317,33 +293,25 @@ def create_teacher_model_squat(args, is_cifar=False):
             else:
                 _logger.warning("Could not find attention projection layer in teacher model")
         
-        # 3. Define new forward function using the hook
         def forward_with_feat(x, is_feat=False, quant_params=None):
             if is_feat:
                 try:
-                    # Run normal forward (hook will capture the feature)
                     output = teacher._original_forward(x)
                     
-                    # Handle output tuple (DeiT distilled models return tuple in training)
                     if isinstance(output, tuple):
                         logit = output[0]
                     else:
                         logit = output
                         
-                    # Get captured feature
                     feat_t = teacher.last_attn_feat
                     
-                    # Fallback if hook didn't run
                     if feat_t is None:
                         _logger.warning("Teacher feature not captured by hook! Using logit as fallback.")
                         feat_t = logit
                     
-                    # Process feature (take CLS token)
-                    # feat_t shape: [B, N, C] -> We need [B, C] (CLS token)
                     if feat_t.dim() == 3:
                         feat_t = feat_t[:, 0, :]
                     
-                    # Quantize teacher feature using student's parameters if enabled
                     if teacher.QFeatureFlag and hasattr(teacher, 'feature_quantizer'):
                         fd_map = teacher.feature_quantizer(feat_t, quant_params=quant_params)
                     else:
@@ -365,14 +333,12 @@ def create_teacher_model_squat(args, is_cifar=False):
 def main(local_rank, args):
     args, args_text = args
     
-    # Set prefetcher: use --prefetcher flag, or disable with --no-prefetcher
     if args.no_prefetcher:
         args.prefetcher = False
     elif not hasattr(args, 'prefetcher') or args.prefetcher is False:
-        args.prefetcher = False  # Default to False
+        args.prefetcher = False 
     args.local_rank = local_rank
     
-    # Device setup: use CUDA if available, otherwise CPU
     if torch.cuda.is_available():
         args.device = f'cuda:{args.gpu_id}'
     else:
@@ -381,14 +347,12 @@ def main(local_rank, args):
     args.world_size = 1
     args.rank = 0
     
-    # Setup output directory first (for log file)
     output_dir = None
     if args.rank == 0:
         if args.experiment:
             exp_name = args.experiment
         else:
             from datetime import datetime
-            # Use safe_model_name from timm.models (already imported at top)
             exp_name = '-'.join([
                 datetime.now().strftime("%Y%m%d-%H%M%S"),
                 safe_model_name(args.model),
@@ -397,12 +361,11 @@ def main(local_rank, args):
             ])
         from timm.utils import get_outdir
         output_dir = get_outdir(args.output, exp_name)
-        args.output_dir = output_dir  # Store for later use
+        args.output_dir = output_dir 
     
-    # Setup logging with file handler
+
     setup_default_logging()
     if output_dir is not None:
-        # Add file handler to logger
         log_file = os.path.join(output_dir, 'training.log')
         file_handler = logging.FileHandler(log_file, mode='w')
         file_handler.setLevel(logging.INFO)
@@ -416,17 +379,15 @@ def main(local_rank, args):
     
     random_seed(args.seed, args.rank)
     
-    # Detect CIFAR dataset and adjust settings
     is_cifar = False
     if args.dataset.lower() in ['torch/cifar10', 'cifar10']:
         is_cifar = True
         if args.num_classes is None:
             args.num_classes = 10
         if args.img_size is None:
-            args.img_size = 224  # Use 224x224 for ImageNet pretrained compatibility
+            args.img_size = 224  
         if args.val_split == 'validation':
             args.val_split = 'test'
-        # Force pretrained=True for teacher to use ImageNet pretrained weights
         if not hasattr(args, 'teacher_pretrained') or not args.teacher_pretrained:
             args.teacher_pretrained = True
         _logger.info("Detected CIFAR-10 dataset. Setting img_size=224, num_classes=10, teacher_pretrained=True")
@@ -435,25 +396,20 @@ def main(local_rank, args):
         if args.num_classes is None:
             args.num_classes = 100
         if args.img_size is None:
-            args.img_size = 224  # Use 224x224 for ImageNet pretrained compatibility
+            args.img_size = 224 
         if args.val_split == 'validation':
             args.val_split = 'test'
-        # Force pretrained=True for teacher to use ImageNet pretrained weights
         if not hasattr(args, 'teacher_pretrained') or not args.teacher_pretrained:
             args.teacher_pretrained = True
         _logger.info("Detected CIFAR-100 dataset. Setting img_size=224, num_classes=100, teacher_pretrained=True")
     
     # Create student model
     if args.model_type == "deit":
-        # For CIFAR, use base model name and override img_size/patch_size via kwargs
         model_name = args.model
         if is_cifar:
-            # Use base model name (e.g., deit_tiny_distilled_patch16_224) and override params
             if 'patch4' in model_name or 'patch8' in model_name:
-                # Already has patch size, use as is
                 pass
             else:
-                # Use standard model name, will override img_size and patch_size
                 if 'deit_tiny' in model_name:
                     model_name = 'deit_tiny_distilled_patch16_224'
                 elif 'deit_small' in model_name:
@@ -465,8 +421,7 @@ def main(local_rank, args):
             model_kwargs = {
                 'num_classes': args.num_classes,
                 'drop_rate': 0.0,
-                'pretrained': False if is_cifar else args.pretrained,  # No pretrained for CIFAR
-                # SQuaT parameters
+                'pretrained': False if is_cifar else args.pretrained, 
                 'model_type': 'student',
                 'QFeatureFlag': False,
                 'feature_levels': args.feature_levels,
@@ -474,34 +429,30 @@ def main(local_rank, args):
                 'use_adaptor_bn': args.use_adaptor_bn,
                 'use_student_quant_params': True
             }
-            # For CIFAR, use 224x224 with patch_size=16 (standard DeiT configuration)
-            # This allows using ImageNet pretrained weights and teacher initialization
             if is_cifar:
-                model_kwargs['img_size'] = 224  # Use 224x224 for ImageNet pretrained compatibility
+                model_kwargs['img_size'] = 224
             
             model = create_model(model_name, **model_kwargs)
             
             if is_cifar:
                 _logger.info(f"Created student model for CIFAR: img_size=224, patch_size=16 (standard DeiT config)")
         except TypeError:
-            # Fallback if model doesn't support SQuaT parameters yet
             model_kwargs = {
                 'num_classes': args.num_classes,
                 'drop_rate': 0.0,
                 'pretrained': False if is_cifar else args.pretrained
             }
             if is_cifar:
-                model_kwargs['img_size'] = 224  # Use 224x224 for ImageNet pretrained compatibility
+                model_kwargs['img_size'] = 224
             
             model = create_model(model_name, **model_kwargs)
             
             if is_cifar:
                 _logger.info(f"Created student model for CIFAR: img_size=224, patch_size=16 (standard DeiT config)")
-            
-            # Manually add SQuaT components if needed
+        
             _logger.warning("Model created without SQuaT parameters, adding them manually")
             
-            # Set SQuaT parameters manually
+
             model.model_type = 'student'
             model.QFeatureFlag = False
             model.feature_levels = args.feature_levels
@@ -509,7 +460,6 @@ def main(local_rank, args):
             model.use_adaptor_bn = args.use_adaptor_bn
             model.use_student_quant_params = True
             
-            # Initialize adaptor if needed
             if model.use_adaptor:
                 embed_dim = model.embed_dim
                 if hasattr(model, '_build_adaptor'):
@@ -521,22 +471,16 @@ def main(local_rank, args):
             else:
                 model.adaptor = None
             
-            # Add forward method wrapper to support is_feat
-            # For timm models, we need to manually extract features
             if not hasattr(model, '_original_forward'):
                 model._original_forward = model.forward
                 def forward_with_feat(x, is_feat=False, quant_params=None):
                     if is_feat:
-                        # Try to use forward_features if available (for custom models)
                         try:
                             if hasattr(model, 'forward_features'):
-                                # Check if forward_features supports is_feat
                                 import inspect
                                 sig = inspect.signature(model.forward_features)
                                 if 'is_feat' in sig.parameters:
-                                    # Call forward_features with is_feat=True
                                     result = model.forward_features(x, is_feat=True, quant_params=quant_params)
-                                    # Parse result: (logit_input, attn, feat, fd_map) or (logit_input, attn, feat)
                                     if isinstance(result, tuple):
                                         if len(result) >= 4:
                                             logit_input, attn, feat, fd_map = result[0], result[1], result[2], result[3]
@@ -546,13 +490,11 @@ def main(local_rank, args):
                                         else:
                                             logit_input = result[0]
                                             attn, feat, fd_map = None, None, None
-                                        
-                                        # Get logit from head
+
                                         if hasattr(model, 'head'):
                                             if model.dist_token is None:
                                                 logit = model.head(logit_input)
                                             else:
-                                                # For distilled models
                                                 if isinstance(logit_input, tuple):
                                                     cls_logit = model.head(logit_input[0])
                                                     dist_logit = model.head_dist(logit_input[1]) if hasattr(model, 'head_dist') else None
@@ -563,7 +505,6 @@ def main(local_rank, args):
                                         else:
                                             return logit_input, attn, feat, fd_map
                                     else:
-                                        # Single output, try to get logit
                                         if hasattr(model, 'head'):
                                             logit = model.head(result)
                                             return logit, None, None, None
@@ -571,13 +512,10 @@ def main(local_rank, args):
                         except Exception as e:
                             _logger.debug(f"forward_features with is_feat failed: {e}, trying manual extraction")
                         
-                        # Fallback: manual feature extraction
                         try:
-                            # Get intermediate features by hooking into the model
                             intermediate_features = []
                             attn_maps = []
                             
-                            # Forward through patch embedding
                             x_patch = model.patch_embed(x)
                             cls_token = model.cls_token.expand(x_patch.shape[0], -1, -1)
                             if model.dist_token is None:
@@ -586,10 +524,8 @@ def main(local_rank, args):
                                 x_tokens = torch.cat((cls_token, model.dist_token.expand(x_patch.shape[0], -1, -1), x_patch), dim=1)
                             x_tokens = model.pos_drop(x_tokens + model.pos_embed)
                             
-                            # Forward through blocks
                             for block in model.blocks:
                                 block_output = block(x_tokens)
-                                # Handle tuple or single output
                                 if isinstance(block_output, tuple):
                                     x_tokens = block_output[0]
                                     attn = block_output[1] if len(block_output) > 1 else None
@@ -601,34 +537,26 @@ def main(local_rank, args):
                             
                             x_tokens = model.norm(x_tokens)
                             
-                            # Extract fd_map from last block's attention (if quantized)
-                            # Teacher uses hook to extract context vector (before projection)
-                            # So Student should also use saved_qact (context vector)
                             fd_map = None
                             if hasattr(model, 'model_type') and model.model_type == 'student' and hasattr(model, 'blocks'):
                                 last_block = model.blocks[-1]
                                 if hasattr(last_block, 'attn'):
                                     attn = last_block.attn
-                                    # Check for saved_qact
                                     if hasattr(attn, 'saved_qact') and attn.saved_qact is not None:
-                                        # qact shape: [B, N, C] -> Take CLS token [B, C]
-                                        # Use only CLS token to match Teacher feature extraction
-                                        qact = attn.saved_qact[:, 0, :]  # B, C
+                                        qact = attn.saved_qact[:, 0, :] 
                                         
                                         if hasattr(model, 'adaptor') and model.adaptor is not None:
                                             fd_map = model.adaptor(qact)
                                         else:
                                             fd_map = qact
                                     else:
-                                        # Fallback: use intermediate feature (Final Output)
                                         if len(intermediate_features) > 0:
-                                            feat = intermediate_features[-1][:, 0, :]  # B, C
+                                            feat = intermediate_features[-1][:, 0, :]  
                                             if hasattr(model, 'adaptor') and model.adaptor is not None:
                                                 fd_map = model.adaptor(feat)
                                             else:
                                                 fd_map = feat
                             
-                            # Get logit
                             if model.dist_token is None:
                                 logit_input = model.pre_logits(x_tokens[:, 0])
                             else:
@@ -642,7 +570,6 @@ def main(local_rank, args):
                             return logit, attn_maps, intermediate_features, fd_map
                         except Exception as e:
                             _logger.debug(f"Manual feature extraction failed: {e}, using fallback")
-                            # Fallback: return standard output
                             output = model._original_forward(x)
                             if isinstance(output, tuple):
                                 return output[0], None, None, None
@@ -656,17 +583,15 @@ def main(local_rank, args):
     
     model.to(args.device)
     
-    # Create teacher model for SQuaT (before quantization, to initialize student from teacher)
+    # Create teacher model for SQuaT
     teacher = None
     teacher_state_dict = None
     if args.use_squat:
         _logger.info("Creating teacher model for SQuaT")
-        # Adjust teacher model name for CIFAR
         if is_cifar:
             original_teacher = args.teacher
-            # Use base model name and override params
             if 'patch4' in args.teacher or 'patch8' in args.teacher:
-                pass  # Already has patch size
+                pass 
             else:
                 if 'deit_tiny' in args.teacher:
                     args.teacher = 'deit_tiny_distilled_patch16_224'
@@ -684,27 +609,21 @@ def main(local_rank, args):
         for param in teacher.parameters():
             param.requires_grad = False
         
-        # Save teacher state dict for student initialization
         teacher_state_dict = teacher.state_dict()
         _logger.info("Teacher model created and loaded. Will use teacher weights to initialize student.")
     
-    # Initialize student from teacher weights (before quantization)
     if teacher_state_dict is not None and args.use_squat:
         _logger.info("Initializing student model from teacher weights...")
         student_state_dict = model.state_dict()
         matched_keys = []
         skipped_keys = []
         
-        # Copy compatible weights from teacher to student
-        # Skip quantization-specific parameters (input_quant_fn, output_quant_fn, etc.)
         for key, value in teacher_state_dict.items():
             if key in student_state_dict:
-                # Skip quantization-related parameters
                 if any(skip_str in key for skip_str in ['input_quant_fn', 'output_quant_fn', 'weight_quant_fn', 
                                                          'quantizer', 's', 'init', 'adaptor']):
                     skipped_keys.append(key)
                     continue
-                # Check shape compatibility
                 if student_state_dict[key].shape == value.shape:
                     student_state_dict[key].copy_(value)
                     matched_keys.append(key)
@@ -722,7 +641,6 @@ def main(local_rank, args):
             else:
                 _logger.debug(f"Skipped keys (first 10): {skipped_keys[:10]}...")
     
-    # Load additional checkpoint if specified (after teacher initialization, before quantization)
     if args.initial_checkpoint:
         _logger.info(f"Loading additional checkpoint from {args.initial_checkpoint}")
         checkpoint = torch.load(args.initial_checkpoint, map_location='cpu')
@@ -732,11 +650,9 @@ def main(local_rank, args):
             state_dict = checkpoint
         model.load_state_dict(state_dict, strict=False)
     
-    # Quantize student model (after weight initialization)
     if args.wq_enable or args.aq_enable:
         _logger.info("Applying quantization to student model...")
         model = get_qat_model(model, args)
-        # Verify quantization was applied
         if hasattr(model, 'blocks'):
             last_block = model.blocks[-1]
             if hasattr(last_block, 'attn'):
@@ -750,8 +666,6 @@ def main(local_rank, args):
                     else:
                         _logger.warning("✗ Quantization NOT applied - qkv has no input_quant_fn")
     
-    # Data loaders
-    # For CIFAR, use custom dataset loader if timm doesn't work well
     if is_cifar:
         from dataset import get_cifar10_dataloaders, get_cifar100_dataloaders
         if 'cifar10' in args.dataset.lower():
@@ -763,7 +677,6 @@ def main(local_rank, args):
                 data_folder=args.data_dir, download=True
             )
         
-        # Create data config for CIFAR (resized to 224x224 for ImageNet pretrained compatibility)
         if 'cifar10' in args.dataset.lower():
             data_config = {
                 'input_size': (3, 224, 224),
@@ -772,7 +685,7 @@ def main(local_rank, args):
                 'interpolation': 'bilinear',
                 'crop_pct': 1.0
             }
-        else:  # CIFAR-100
+        else:  
             data_config = {
                 'input_size': (3, 224, 224),
                 'mean': (0.5071, 0.4867, 0.4408),
@@ -789,13 +702,11 @@ def main(local_rank, args):
         )
     
     if is_cifar:
-        # For CIFAR, create simple DataLoaders
         from torch.utils.data import DataLoader
-        # Platform detection: macOS uses num_workers=0, Linux uses 4
         import platform
         is_macos = platform.system() == 'Darwin'
         num_workers = args.workers if args.workers is not None else (0 if is_macos else 4)
-        pin_memory = not is_macos  # pin_memory not recommended on macOS
+        pin_memory = not is_macos  
         
         loader_train = DataLoader(
             dataset_train,
@@ -812,11 +723,10 @@ def main(local_rank, args):
             pin_memory=pin_memory
         )
     else:
-        # Platform detection: macOS uses num_workers=0, Linux uses 4
         import platform
         is_macos = platform.system() == 'Darwin'
         num_workers = args.workers if args.workers is not None else (0 if is_macos else 4)
-        pin_memory = not is_macos  # pin_memory not recommended on macOS
+        pin_memory = not is_macos  
         
         loader_train = create_loader(
             dataset_train,
@@ -852,8 +762,6 @@ def main(local_rank, args):
             pin_memory=pin_memory
         )
     
-    # Optimizer and scheduler
-    # Add default optimizer/scheduler parameters if not present
     if not hasattr(args, 'momentum'):
         args.momentum = 0.9
     if not hasattr(args, 'decay_rate'):
@@ -865,12 +773,9 @@ def main(local_rank, args):
     if not hasattr(args, 'patience_epochs'):
         args.patience_epochs = 10
     
-    # Initialize quantizers by doing a dummy forward pass
-    # This is necessary because LSQ quantizers initialize their 's' parameter in the first forward pass
     _logger.info("Initializing quantizers with dummy forward pass...")
     model.train()
     with torch.no_grad():
-        # Get a sample batch to initialize quantizers
         dummy_input = None
         for batch_idx, (input, target) in enumerate(loader_train):
             dummy_input = input.to(args.device)
@@ -884,7 +789,6 @@ def main(local_rank, args):
     
     optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
     
-    # Check if quantizer parameters are in optimizer
     quantizer_params_in_optimizer = []
     quantizer_params_not_in_optimizer = []
     optimizer_param_ids = set()
@@ -892,11 +796,8 @@ def main(local_rank, args):
         for param in param_group['params']:
             optimizer_param_ids.add(id(param))
     
-    # Find all quantizer s parameters in the model
-    # Count both QLinear's input_quant_fn and direct LsqQuantizer modules
     for name, module in model.named_modules():
         try:
-            # Check QLinear's input_quant_fn
             if hasattr(module, 'input_quant_fn'):
                 input_quant_fn = module.input_quant_fn
                 if hasattr(input_quant_fn, 's'):
@@ -908,9 +809,7 @@ def main(local_rank, args):
                         else:
                             quantizer_params_not_in_optimizer.append(name)
                             _logger.warning(f"✗ Quantizer s parameter NOT in optimizer: {name}, requires_grad={s_param.requires_grad}, shape={s_param.shape}")
-            # Also check direct LsqQuantizer modules (e.g., quan_a_q_fn, quan_a_k_fn, etc.)
             elif hasattr(module, 's') and isinstance(module, torch.nn.Module):
-                # Check if it's a quantizer module (has 's' parameter and 'learnable' attribute)
                 if hasattr(module, 'learnable') and hasattr(module, 'bit'):
                     s_param = module.s
                     if s_param is not None and isinstance(s_param, torch.nn.Parameter):
@@ -927,13 +826,11 @@ def main(local_rank, args):
     if quantizer_params_not_in_optimizer:
         _logger.warning(f"Found {len(quantizer_params_not_in_optimizer)} quantizer parameters NOT in optimizer!")
         _logger.warning("Adding missing quantizer parameters to optimizer...")
-        # Add missing quantizer parameters to optimizer
         for name in quantizer_params_not_in_optimizer:
             module = dict(model.named_modules())[name]
             if hasattr(module, 'input_quant_fn') and hasattr(module.input_quant_fn, 's'):
                 s_param = module.input_quant_fn.s
                 if s_param is not None and s_param.requires_grad:
-                    # Add to the first parameter group
                     optimizer.param_groups[0]['params'].append(s_param)
                     _logger.info(f"✓ Added quantizer parameter to optimizer: {name}")
     else:
@@ -941,18 +838,14 @@ def main(local_rank, args):
     
     lr_scheduler, num_epochs = create_scheduler(args, optimizer)
     
-    # Loss functions
     criterion_cls = nn.CrossEntropyLoss().to(args.device)
-    criterion_div = None  # KL divergence for logit distillation
+    criterion_div = None  
     if args.use_squat:
         from timm.loss import LabelSmoothingCrossEntropy
-        # For logit distillation (optional)
         criterion_div = LabelSmoothingCrossEntropy(smoothing=0.1).to(args.device)
     
-    # Use output directory already set up in the beginning
     output_dir = getattr(args, 'output_dir', None)
     if output_dir is None:
-        # Fallback: setup output directory if not already done
         if args.rank == 0:
             if args.experiment:
                 exp_name = args.experiment
@@ -965,13 +858,11 @@ def main(local_rank, args):
                 ])
             output_dir = get_outdir(args.output, exp_name)
             args.output_dir = output_dir
-    
-    # Save args to file
+
     if output_dir is not None:
         with open(os.path.join(output_dir, 'args.yaml'), 'w') as f:
             f.write(args_text)
     
-    # Training loop
     best_metric = None
     best_epoch = None
     
@@ -995,7 +886,6 @@ def main(local_rank, args):
                 write_header=best_metric is None
             )
         
-        # Save checkpoint
         if output_dir is not None:
             save_metric = eval_metrics.get('top1', 0)
             if best_metric is None or save_metric > best_metric:
@@ -1042,9 +932,7 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
                 _logger.error(f"Student forward failed: {e}")
                 raise
             
-            # Get student quantization parameters
             quant_params = get_student_quant_params(model)
-            # Print quant params every N batches or on first batch
             if batch_idx == 0 or batch_idx % 100 == 0:
                 s_info = quant_params.get('s', None)
                 if s_info is not None and isinstance(s_info, torch.Tensor):
@@ -1052,8 +940,6 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
                 else:
                     s_mean = s_info if s_info is not None else 'None'
                 _logger.info(f"[BATCH {batch_idx}] quant_params: s={s_mean:.6f}, bit={quant_params.get('bit', 'None')}, all_positive={quant_params.get('all_positive', 'None')}")
-                # Also print actual student quantizer 's' value to see if it's changing
-                # Check proj's quantizer (same as saved_qact source)
                 if hasattr(model, 'blocks') and len(model.blocks) > 0:
                     last_block = model.blocks[-1]
                     if hasattr(last_block, 'attn') and hasattr(last_block.attn, 'proj'):
@@ -1068,7 +954,6 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
                 try:
                     teacher_logit, teacher_attn, teacher_feat, fd_map_t = teacher(input, is_feat=True, quant_params=quant_params)
                     if (batch_idx == 0 or batch_idx % 100 == 0) and hasattr(teacher, 'feature_quantizer'):
-                        # Log teacher quantizer parameters
                         if hasattr(teacher.feature_quantizer, 'lsq_quantizer') and hasattr(teacher.feature_quantizer.lsq_quantizer, 's'):
                             s = teacher.feature_quantizer.lsq_quantizer.s
                             if s is not None:
@@ -1079,10 +964,8 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
                     _logger.error(f"Teacher forward failed: {e}")
                     raise
             
-            # Compute losses
             loss_cls = criterion_cls(student_logit, target)
             
-            # Debug: Check fd_map status (periodically)
             if batch_idx == 0 or batch_idx % args.log_interval == 0:
                 _logger.info(f"[BATCH {batch_idx}] fd_map_s: {'Tensor' if fd_map_s is not None else 'None'}, fd_map_t: {'Tensor' if fd_map_t is not None else 'None'}")
                 if fd_map_s is not None:
@@ -1092,16 +975,12 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
             
             # Feature distillation loss
             if fd_map_s is not None and fd_map_t is not None:
-                # Ensure shapes match (handle dimension mismatches)
                 if fd_map_s.shape != fd_map_t.shape:
-                    # Try to reshape or take mean
                     if fd_map_s.dim() == 2 and fd_map_t.dim() == 2:
-                        # Both are 2D, ensure same size
                         min_dim = min(fd_map_s.shape[1], fd_map_t.shape[1])
                         fd_map_s = fd_map_s[:, :min_dim]
                         fd_map_t = fd_map_t[:, :min_dim]
                     else:
-                        # Flatten and take matching dimensions
                         fd_map_s_flat = fd_map_s.view(fd_map_s.shape[0], -1)
                         fd_map_t_flat = fd_map_t.view(fd_map_t.shape[0], -1)
                         min_dim = min(fd_map_s_flat.shape[1], fd_map_t_flat.shape[1])
@@ -1122,10 +1001,9 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
                     if fd_map_t is None:
                         _logger.warning("fd_map_t is None, skipping feature distillation")
             
-            # Optional: Logit distillation (KL divergence)
+            # Logit distillation 
             loss_div = torch.tensor(0.0).to(args.device)
             if args.kd_beta > 0 and criterion_cls is not None:
-                # KL divergence with temperature
                 kd_T = getattr(args, 'kd_T', 4.0)
                 student_log_softmax = torch.log_softmax(student_logit / kd_T, dim=1)
                 teacher_softmax = torch.softmax(teacher_logit / kd_T, dim=1)
@@ -1133,14 +1011,11 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
                     student_log_softmax, teacher_softmax
                 ) * (kd_T ** 2)
             
-            # Total loss: alpha * classification_loss + beta * logit_distill + gamma * feature_distill
-            # Set kd_alpha=0.0 to exclude classification loss (only use fd and kd)
             kd_alpha = getattr(args, 'kd_alpha', 0.0)
             kd_beta = getattr(args, 'kd_beta', 1.0)
             kd_gamma = getattr(args, 'kd_gamma', 1.0)
             loss = kd_alpha * loss_cls + kd_beta * loss_div + kd_gamma * loss_fd
             
-            # Log loss components periodically
             if batch_idx == 0 or batch_idx % args.log_interval == 0:
                 cls_weight = kd_alpha
                 _logger.info(
@@ -1152,16 +1027,13 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
                     f"(weights: alpha={kd_alpha:.2f}, beta={kd_beta:.2f}, gamma={kd_gamma:.2f})"
                 )
             
-            # Ensure loss is a valid tensor
             if not torch.isfinite(loss):
                 _logger.warning(f"Non-finite loss detected: loss_cls={loss_cls}, loss_div={loss_div}, loss_fd={loss_fd}")
-                # Fallback: use only feature distillation if available, otherwise use classification loss
                 if torch.isfinite(loss_fd) and loss_fd.item() > 0:
                     loss = loss_fd
                 else:
                     loss = loss_cls
         else:
-            # Standard training without distillation
             output = model(input)
             student_logit = output[0] if isinstance(output, tuple) else output
             loss = criterion_cls(student_logit, target)
@@ -1170,7 +1042,6 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
         optimizer.zero_grad()
         loss.backward()
         
-        # Check gradient for quantizer s parameter (periodically)
         if batch_idx == 0 or batch_idx % args.log_interval == 0:
             try:
                 if hasattr(model, 'blocks') and len(model.blocks) > 0:
@@ -1258,7 +1129,7 @@ def validate(model, loader, criterion, args):
 
 if __name__ == '__main__':
     args, args_text = parse_args()
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+    #os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
     
     main(0, (args, args_text))
 

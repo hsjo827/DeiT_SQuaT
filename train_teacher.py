@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-Training script for Teacher Model (Full-precision, no quantization)
-Used to train teacher models for SQuaT knowledge distillation
-"""
+
 import argparse
 import sys
 import time
@@ -27,17 +24,14 @@ from timm.utils import *
 from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler
 
-# Import custom DeiT models to register them with timm
-# This ensures that create_model() uses our custom models instead of timm's default
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import src.deit  # noqa: F401 - Import to register models with timm
+import src.deit 
 
 import math
 
 torch.backends.cudnn.benchmark = True
 _logger = logging.getLogger('train')
 
-# Config parser
 config_parser = parser = argparse.ArgumentParser(description='Training Config', add_help=False)
 parser.add_argument('-c', '--config', default='', type=str, metavar='FILE',
                     help='YAML config file specifying default arguments')
@@ -124,15 +118,13 @@ def parse_args():
 
 def main(local_rank, args):
     args, args_text = args
-    
-    # Set prefetcher: use --prefetcher flag, or disable with --no-prefetcher
+
     if args.no_prefetcher:
         args.prefetcher = False
     elif not hasattr(args, 'prefetcher') or args.prefetcher is False:
-        args.prefetcher = False  # Default to False
+        args.prefetcher = False  
     args.local_rank = local_rank
     
-    # Device setup: use CUDA if available, otherwise CPU
     if torch.cuda.is_available():
         args.device = f'cuda:{args.gpu_id}'
     else:
@@ -141,7 +133,6 @@ def main(local_rank, args):
     args.world_size = 1
     args.rank = 0
     
-    # Setup output directory first (for log file)
     output_dir = None
     if args.rank == 0:
         if args.experiment:
@@ -155,12 +146,10 @@ def main(local_rank, args):
             ])
         from timm.utils import get_outdir
         output_dir = get_outdir(args.output, exp_name)
-        args.output_dir = output_dir  # Store for later use
+        args.output_dir = output_dir
     
-    # Setup logging with file handler
     setup_default_logging()
     if output_dir is not None:
-        # Add file handler to logger
         log_file = os.path.join(output_dir, 'training.log')
         file_handler = logging.FileHandler(log_file, mode='w')
         file_handler.setLevel(logging.INFO)
@@ -174,17 +163,15 @@ def main(local_rank, args):
     
     random_seed(args.seed, args.rank)
     
-    # Detect CIFAR dataset and adjust settings
     is_cifar = False
     if args.dataset.lower() in ['torch/cifar10', 'cifar10']:
         is_cifar = True
         if args.num_classes is None:
             args.num_classes = 10
         if args.img_size is None:
-            args.img_size = 224  # Use 224x224 for ImageNet pretrained fine-tuning
+            args.img_size = 224  
         if args.val_split == 'validation':
             args.val_split = 'test'
-        # Force pretrained=True for CIFAR to use ImageNet pretrained weights
         if not hasattr(args, 'pretrained') or not args.pretrained:
             args.pretrained = True
         _logger.info("Detected CIFAR-10 dataset. Setting img_size=224, num_classes=10, pretrained=True")
@@ -193,19 +180,17 @@ def main(local_rank, args):
         if args.num_classes is None:
             args.num_classes = 100
         if args.img_size is None:
-            args.img_size = 224  # Use 224x224 for ImageNet pretrained fine-tuning
+            args.img_size = 224  
         if args.val_split == 'validation':
             args.val_split = 'test'
-        # Force pretrained=True for CIFAR to use ImageNet pretrained weights
         if not hasattr(args, 'pretrained') or not args.pretrained:
             args.pretrained = True
         _logger.info("Detected CIFAR-100 dataset. Setting img_size=224, num_classes=100, pretrained=True")
     
-    # Create teacher model (full-precision, no quantization)
+    # Create teacher model 
     if args.model_type == "deit":
         model_name = args.model
         if is_cifar:
-            # Use base model name and override params
             if 'patch4' in model_name or 'patch8' in model_name:
                 pass
             else:
@@ -219,10 +204,10 @@ def main(local_rank, args):
         model_kwargs = {
             'num_classes': args.num_classes,
             'drop_rate': 0.0,
-            'pretrained': args.pretrained,  # Use pretrained for ImageNet weights
+            'pretrained': args.pretrained,  
         }
         if is_cifar:
-            model_kwargs['img_size'] = 224  # Use 224x224 for ImageNet pretrained
+            model_kwargs['img_size'] = 224  
         
         model = create_model(model_name, **model_kwargs)
         
@@ -239,7 +224,6 @@ def main(local_rank, args):
     
     model.to(args.device)
     
-    # Data loaders
     if is_cifar:
         from dataset import get_cifar10_dataloaders, get_cifar100_dataloaders
         if 'cifar10' in args.dataset.lower():
@@ -251,7 +235,6 @@ def main(local_rank, args):
                 data_folder=args.data_dir, download=True
             )
         
-        # Create data config for CIFAR (resized to 224x224 for ImageNet pretrained fine-tuning)
         if 'cifar10' in args.dataset.lower():
             data_config = {
                 'input_size': (3, 224, 224),
@@ -260,7 +243,7 @@ def main(local_rank, args):
                 'interpolation': 'bilinear',
                 'crop_pct': 1.0
             }
-        else:  # CIFAR-100
+        else:  
             data_config = {
                 'input_size': (3, 224, 224),
                 'mean': (0.5071, 0.4867, 0.4408),
@@ -269,7 +252,6 @@ def main(local_rank, args):
                 'crop_pct': 1.0
             }
         
-        # For CIFAR, create simple DataLoaders
         from torch.utils.data import DataLoader
         import platform
         is_macos = platform.system() == 'Darwin'
@@ -298,7 +280,6 @@ def main(local_rank, args):
             batch_size=args.batch_size
         )
         
-        # Platform detection: macOS uses num_workers=0, Linux uses 4
         import platform
         is_macos = platform.system() == 'Darwin'
         num_workers = args.workers if args.workers is not None else (0 if is_macos else 4)
@@ -338,7 +319,6 @@ def main(local_rank, args):
             pin_memory=pin_memory
         )
     
-    # Optimizer and scheduler
     if not hasattr(args, 'momentum'):
         args.momentum = 0.9
     if not hasattr(args, 'decay_rate'):
@@ -353,10 +333,8 @@ def main(local_rank, args):
     optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
     lr_scheduler, num_epochs = create_scheduler(args, optimizer)
     
-    # Loss function
     criterion_cls = nn.CrossEntropyLoss().to(args.device)
     
-    # Use output directory already set up in the beginning
     output_dir = getattr(args, 'output_dir', None)
     if output_dir is None:
         if args.rank == 0:
@@ -371,12 +349,10 @@ def main(local_rank, args):
             output_dir = get_outdir(args.output, exp_name)
             args.output_dir = output_dir
     
-    # Save args to file
     if output_dir is not None:
         with open(os.path.join(output_dir, 'args.yaml'), 'w') as f:
             f.write(args_text)
     
-    # Resume from checkpoint if needed
     start_epoch = args.start_epoch
     if args.resume:
         if os.path.isfile(args.resume):
@@ -388,7 +364,6 @@ def main(local_rank, args):
             _logger.error(f'No checkpoint found at "{args.resume}"')
             return
     
-    # Training loop
     best_metric = None
     best_epoch = None
     
@@ -412,7 +387,6 @@ def main(local_rank, args):
                 write_header=best_metric is None
             )
         
-        # Save checkpoint
         if output_dir is not None:
             save_metric = eval_metrics.get('top1', 0)
             if best_metric is None or save_metric > best_metric:
@@ -454,12 +428,10 @@ def train_one_epoch(epoch, model, loader, optimizer, criterion_cls, args,
         
         # Forward pass
         output = model(input)
-        # Handle DeiT distilled model output: training mode returns ((cls_x, x_dist), attn_info)
         if isinstance(output, tuple):
             logit = output[0]
-            # If logit is a tuple (cls_x, x_dist), use average of both
             if isinstance(logit, tuple):
-                logit = (logit[0] + logit[1]) / 2  # Average of cls_x and x_dist
+                logit = (logit[0] + logit[1]) / 2  
         else:
             logit = output
         loss = criterion_cls(logit, target)
@@ -508,12 +480,10 @@ def validate(model, loader, criterion, args):
             target = target.to(args.device)
             
             output = model(input)
-            # Handle DeiT distilled model output: eval mode returns ((cls_x + x_dist)/2, attn_info)
             if isinstance(output, tuple):
                 logit = output[0]
-                # Eval mode already returns averaged logit, but handle tuple case if needed
                 if isinstance(logit, tuple):
-                    logit = (logit[0] + logit[1]) / 2  # Average of cls_x and x_dist
+                    logit = (logit[0] + logit[1]) / 2 
             else:
                 logit = output
             
@@ -544,7 +514,7 @@ def validate(model, loader, criterion, args):
 
 if __name__ == '__main__':
     args, args_text = parse_args()
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+    #os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
     
     main(0, (args, args_text))
 

@@ -1,6 +1,4 @@
-# CIFAR-100 Configuration for OFQ + SQuaT
-# Dataset: CIFAR-100 (resized to 224x224 for ImageNet pretrained compatibility)
-# Approach: ImageNet Pretrained Teacher + Student initialization from Teacher weights
+# CIFAR-100 Configuration for SQuaT (DeiT-Tiny)
 
 # Dataset settings
 dataset: 'torch/cifar100'
@@ -12,14 +10,14 @@ num_classes: 100
 # Model settings
 model: 'deit_tiny_distilled_patch16_224'
 model_type: 'deit'
-img_size: 224  # Use 224x224 for ImageNet pretrained compatibility
+img_size: 224 
 teacher: 'deit_tiny_distilled_patch16_224'
-teacher_pretrained: true  # Use ImageNet pretrained weights for teacher
-teacher_checkpoint: '/Users/hyeonsik/Documents/GitHub/DeiT_SQuaT/outputs/teacher/20251124-035253-deit_tiny_distilled_patch16_224-teacher/best.pth.tar'  # Optional: path to fine-tuned teacher checkpoint
+teacher_pretrained: true 
+teacher_checkpoint: ''  # Optional: path to fine-tuned teacher checkpoint
 
 # Training settings
 batch_size: 128
-epochs: 100
+epochs: 300
 opt: 'adamw'
 lr: 0.001
 weight_decay: 0.05
@@ -28,7 +26,7 @@ warmup_lr: 0.0001
 min_lr: 0.00001
 warmup_epochs: 10
 
-# Quantization settings (OFQ)
+# Quantization settings
 wq_enable: true
 wq_mode: 'statsq'
 wq_bitw: 2

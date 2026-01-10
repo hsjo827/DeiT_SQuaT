@@ -26,7 +26,6 @@ class LsqQuantizerWeight(torch.nn.Module):
                 self.thd_neg = 0
                 self.thd_pos = 1
             else:
-                # unsigned activation is quantized to [0, 2^b-1]
                 self.thd_neg = 0
                 self.thd_pos = 2 ** bit - 1
         else:
@@ -34,7 +33,6 @@ class LsqQuantizerWeight(torch.nn.Module):
                 self.thd_neg = -1
                 self.thd_pos = 1
             else:
-                # signed weight/activation is quantized to [-2^(b-1), 2^(b-1)-1]
                 self.thd_neg = - 2 ** (bit - 1)
                 self.thd_pos = 2 ** (bit - 1) - 1
 
@@ -42,33 +40,33 @@ class LsqQuantizerWeight(torch.nn.Module):
         self.per_channel = per_channel
         self.all_positive = all_positive
         self.learnable = learnable
-        # you need to register the parameter names earlier
+
         self.register_parameter('s', None)
         self.initialized_alpha = False
 
     def init_from(self, x, *args, **kwargs):
         if self.per_channel:
-            # print("init alpha")
+
             assert len(x.shape) == 2
             if len(x.shape) == 2:
                 init_val = 2 * x.detach().abs().mean(dim=-1) / (self.thd_pos ** 0.5) if not self.all_positive \
                         else 4 * x.detach().abs().mean(dim=-1) / (self.thd_pos ** 0.5)
             if self.learnable:
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[-2], device=device))
                 self.s.data.copy_(init_val.to(device))
             else:
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[-2], device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
         else:
             init_val = x.detach().abs().mean() * 2 / (self.thd_pos ** 0.5)
             if self.learnable: 
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device))
                 self.s.data.copy_(init_val.to(device))
             else: 
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
         self.initialized_alpha = True
@@ -113,10 +111,6 @@ class LsqQuantizerWeight(torch.nn.Module):
         )
 
 class TrackOscillation(torch.nn.Module):
-    """
-    This is a wrapper of the int_forward function of a quantizer.
-    It tracks the oscillations in integer domain.
-    """
 
     def __init__(self, momentum=0.01, freeze_threshold=0, use_ema_x_int=True):
         super(TrackOscillation, self).__init__()
@@ -125,14 +119,12 @@ class TrackOscillation(torch.nn.Module):
         self.prev_x_int = None
         self.prev_switch_dir = None
 
-        # Statistics to log
         self.ema_oscillation = None
         self.oscillated_sum = None
         self.total_oscillation = None
         self.iters_since_reset = 0
 
-        # Extra variables for weight freezing
-        self.freeze_threshold = freeze_threshold  # This should be at least 2-3x the momentum value.
+        self.freeze_threshold = freeze_threshold 
         self.use_ema_x_int = use_ema_x_int
         self.frozen = None
         self.frozen_x_int = None
@@ -140,7 +132,6 @@ class TrackOscillation(torch.nn.Module):
 
     def __call__(self, x_int, skip_tracking=False, *args, **kwargs):
        
-        # Apply weight freezing
         if self.frozen is not None:
             x_int = ~self.frozen * x_int + self.frozen * self.frozen_x_int
 
@@ -148,13 +139,12 @@ class TrackOscillation(torch.nn.Module):
             return x_int
 
         with torch.no_grad():
-            # Check if everything is correctly initialized, otherwise do so
+
             self.check_init(x_int)
 
-            # detect difference in x_int  NB we round to avoid int inaccuracies
-            delta_x_int = torch.round(self.prev_x_int - x_int).detach()  # should be {-1, 0, 1}
-            switch_dir = torch.sign(delta_x_int)  # This is {-1, 0, 1} as sign(0) is mapped to 0
-            # binary mask for switching
+            delta_x_int = torch.round(self.prev_x_int - x_int).detach()  
+            switch_dir = torch.sign(delta_x_int)  
+          
             switched = delta_x_int != 0
 
             oscillated = (self.prev_switch_dir * switch_dir) == -1
@@ -162,20 +152,17 @@ class TrackOscillation(torch.nn.Module):
                 self.momentum * oscillated + (1 - self.momentum) * self.ema_oscillation
             )
 
-            # Update prev_switch_dir for the switch variables
             self.prev_switch_dir[switched] = switch_dir[switched]
             self.prev_x_int = x_int
             self.oscillated_sum = oscillated.sum()
             self.total_oscillation += oscillated
             self.iters_since_reset += 1
 
-            # Freeze some weights
             if self.freeze_threshold > 0:
                 freeze_weights = self.ema_oscillation > self.freeze_threshold
-                self.frozen[freeze_weights] = True  # Set them to frozen
+                self.frozen[freeze_weights] = True  
                 if self.use_ema_x_int:
                     self.frozen_x_int[freeze_weights] = torch.round(self.ema_x_int[freeze_weights])
-                    # Update x_int EMA which can be used for freezing
                     self.ema_x_int = self.momentum * x_int + (1 - self.momentum) * self.ema_x_int
                 else:
                     self.frozen_x_int[freeze_weights] = x_int[freeze_weights]
@@ -184,19 +171,16 @@ class TrackOscillation(torch.nn.Module):
 
     def check_init(self, x_int):
         if self.prev_x_int is None:
-            # Init prev switch dir to 0
             self.prev_switch_dir = torch.zeros_like(x_int)
-            self.prev_x_int = x_int.detach()  # Not sure if needed, don't think so
+            self.prev_x_int = x_int.detach()  
             self.ema_oscillation = torch.zeros_like(x_int)
             self.oscillated_sum = 0
             self.total_oscillation = torch.zeros_like(x_int)
-            # print("Init tracking", x_int.shape)
         else:
             assert (
                 self.prev_x_int.shape == x_int.shape
             ), "Tracking shape does not match current tensor shape."
 
-        # For weight freezing
         if self.frozen is None and self.freeze_threshold > 0:
             self.frozen = torch.zeros_like(x_int, dtype=torch.bool)
             self.frozen_x_int = torch.zeros_like(x_int)
@@ -205,16 +189,13 @@ class TrackOscillation(torch.nn.Module):
 
 class LsqQuantizerWeight_iterative_freezing(torch.nn.Module):
     def __init__(self, bit, all_positive=False,per_channel=True, learnable = True, freeze_momentum = 0.01, freeze_threshold = 0.0,**kwargs):
-        # super().__init__(bit, normalize_first)
         super(LsqQuantizerWeight_iterative_freezing, self).__init__()
 
         if all_positive:
-            # assert not symmetric, "Positive quantization cannot be symmetric"
             if bit == 1:
                 self.thd_neg = 0
                 self.thd_pos = 1
             else:
-                # unsigned activation is quantized to [0, 2^b-1]
                 self.thd_neg = 0
                 self.thd_pos = 2 ** bit - 1
         else:
@@ -222,7 +203,6 @@ class LsqQuantizerWeight_iterative_freezing(torch.nn.Module):
                 self.thd_neg = -1
                 self.thd_pos = 1
             else:
-                # signed weight/activation is quantized to [-2^(b-1), 2^(b-1)-1]
                 self.thd_neg = - 2 ** (bit - 1)
                 self.thd_pos = 2 ** (bit - 1) - 1
 
@@ -230,42 +210,38 @@ class LsqQuantizerWeight_iterative_freezing(torch.nn.Module):
         self.per_channel = per_channel
         self.all_positive = all_positive
         self.learnable = learnable
-        # you need to register the parameter names earlier
         self.register_parameter('s', None)
         self.initialized_alpha = False
         
-        ### freeze tracker
         self.weight_freeze_tracker = TrackOscillation(momentum= freeze_momentum, freeze_threshold= freeze_threshold,use_ema_x_int= True)
 
     def init_from(self, x, *args, **kwargs):
         if self.per_channel:
-            # print("init alpha")
             assert len(x.shape) == 2
             if len(x.shape) == 2:
                 init_val = 2 * x.detach().abs().mean(dim=-1) / (self.thd_pos ** 0.5) if not self.all_positive \
                         else 4 * x.detach().abs().mean(dim=-1) / (self.thd_pos ** 0.5)
             if self.learnable:
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[-2], device=device))
                 self.s.data.copy_(init_val.to(device))
             else:
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[-2], device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
         else:
             init_val = x.detach().abs().mean() * 2 / (self.thd_pos ** 0.5)
             if self.learnable: 
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device))
                 self.s.data.copy_(init_val.to(device))
             else: 
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
         self.initialized_alpha = True
         
     def forward(self, x):
-        # eps = torch.tensor(0.00001).float().to(alpha.device)
         if self.per_channel:
             if (not self.initialized_alpha):
                 self.init_from(x)
@@ -294,7 +270,6 @@ class LsqQuantizerWeight_iterative_freezing(torch.nn.Module):
             x = torch.clamp(x, self.thd_neg, self.thd_pos)
             x = round_pass(x)
         
-        ### add iterative freeze here
         if self.training:
             x = self.weight_freeze_tracker(x_int=x,skip_tracking=False)
         else:
@@ -320,7 +295,6 @@ class LsqQuantizer4img(torch.nn.Module):
         self.per_channel = per_channel
         self.all_positive = all_positive
         self.learnable = learnable
-        # you need to register the parameter names earlier
         self.register_parameter('s', None)
         self.initialized_alpha = False
 
@@ -333,11 +307,11 @@ class LsqQuantizer4img(torch.nn.Module):
                 print("img mush have shape B,C,H,W")
             
             if self.learnable:
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[1], device=device))
                 self.s.data.copy_(init_val.to(self.s.device))
             else:
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[1], device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(self.s.device))
 
@@ -399,7 +373,7 @@ class LsqQuantizer4Conv2d(torch.nn.Module):
         self.per_channel = per_channel
         self.all_positive = all_positive
         self.learnable = learnable
-        # you need to register the parameter names earlier
+
         if self.bit == 1:
             self.thd_neg = -1
             self.thd_pos = 1
@@ -418,11 +392,11 @@ class LsqQuantizer4Conv2d(torch.nn.Module):
                 print("img mush have shape B,C,H,W")
             
             if self.learnable:
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[0], device=device))
                 self.s.data.copy_(init_val.to(device))
             else:
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[0], device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
 
@@ -451,7 +425,6 @@ class LsqQuantizer4Conv2d(torch.nn.Module):
     def extra_repr(self):
         return (
             f"bit={self.bit}, "
-            # f"{self.eps}), "
             f"all_positive={self.all_positive}, "
             f"s_learnable={self.learnable}, "
             f"per_channel={self.per_channel}"
@@ -466,7 +439,6 @@ class LsqQuantizer4head_input(torch.nn.Module):
                 self.thd_neg = 0
                 self.thd_pos = 1
             else:
-                # unsigned activation is quantized to [0, 2^b-1]
                 self.thd_neg = 0
                 self.thd_pos = 2 ** bit - 1
         else:
@@ -474,7 +446,6 @@ class LsqQuantizer4head_input(torch.nn.Module):
                 self.thd_neg = -1
                 self.thd_pos = 1
             else:
-                # signed weight/activation is quantized to [-2^(b-1), 2^(b-1)-1]
                 self.thd_neg = - 2 ** (bit - 1)
                 self.thd_pos = 2 ** (bit - 1) - 1
 
@@ -483,7 +454,6 @@ class LsqQuantizer4head_input(torch.nn.Module):
         self.all_positive = all_positive
         self.learnable = learnable
 
-        # you need to register the parameter names earlier
         self.register_parameter('s', None)
         self.initialized_alpha = False
 
@@ -491,11 +461,11 @@ class LsqQuantizer4head_input(torch.nn.Module):
 
         init_val = x.detach().abs().mean() * 2 / (self.thd_pos ** 0.5)
         if self.learnable: 
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device))
                 self.s.data.copy_(init_val.to(device))
         else: 
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
         self.initialized_alpha = True
@@ -535,7 +505,6 @@ class LsqQuantizer(torch.nn.Module):
                 self.thd_neg = 0
                 self.thd_pos = 1
             else:
-                # unsigned activation is quantized to [0, 2^b-1]
                 self.thd_neg = 0
                 self.thd_pos = 2 ** bit - 1
         else:
@@ -543,7 +512,6 @@ class LsqQuantizer(torch.nn.Module):
                 self.thd_neg = -1
                 self.thd_pos = 1
             else:
-                # signed weight/activation is quantized to [-2^(b-1), 2^(b-1)-1]
                 self.thd_neg = - 2 ** (bit - 1)
                 self.thd_pos = 2 ** (bit - 1) - 1
 
@@ -551,40 +519,36 @@ class LsqQuantizer(torch.nn.Module):
         self.per_channel = per_channel
         self.all_positive = all_positive
         self.learnable = learnable
-        # you need to register the parameter names earlier
         self.register_parameter('s', None)
         self.initialized_alpha = False
 
     def init_from(self, x, *args, **kwargs):
         if self.per_channel:
             if len(x.shape) == 3:
-                # (B, N, C): per_channel means per channel dimension (C), so s should be (C,)
                 init_val = 2 * x.detach().abs().mean(dim=0).mean(dim=0) / (self.thd_pos ** 0.5) if not self.all_positive \
                         else 4 * x.detach().abs().mean(dim=0).mean(dim=0) / (self.thd_pos ** 0.5)
             elif len(x.shape) == 2:
-                # (B, C): per_channel means per channel dimension (C), so s should be (C,)
                 init_val = 2 * x.detach().abs().mean(dim=0) / (self.thd_pos ** 0.5) if not self.all_positive \
                         else 4 * x.detach().abs().mean(dim=0) / (self.thd_pos ** 0.5)
             elif len(x.shape) == 4:
-                # (B, H, W, C) or similar: per_channel means per channel dimension (C), so s should be (C,)
                 init_val = 2 * x.detach().abs().mean(dim=0).mean(dim=0).mean(dim=0) / (self.thd_pos ** 0.5) if not self.all_positive \
                         else 4 * x.detach().abs().mean(dim=0).mean(dim=0).mean(dim=0) / (self.thd_pos ** 0.5)
             if self.learnable:
-                device = x.device  # Use the same device as input
-                self.s = torch.nn.Parameter(torch.zeros(x.shape[-1], device=device))  # per_channel: s is (C,)
+                device = x.device 
+                self.s = torch.nn.Parameter(torch.zeros(x.shape[-1], device=device)) 
                 self.s.data.copy_(init_val.to(device))
             else:
-                device = x.device  # Use the same device as input
-                self.s = torch.nn.Parameter(torch.zeros(x.shape[-1], device=device),requires_grad=False)  # per_channel: s is (C,)
+                device = x.device  
+                self.s = torch.nn.Parameter(torch.zeros(x.shape[-1], device=device),requires_grad=False)  
                 self.s.data.copy_(init_val.to(device))
         else:
             init_val = x.detach().abs().mean() * 2 / (self.thd_pos ** 0.5)
             if self.learnable: 
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device))
                 self.s.data.copy_(init_val.to(device))
             else: 
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
         self.initialized_alpha = True
@@ -647,7 +611,6 @@ class LsqQuantizer_only_headwise(torch.nn.Module):
                 self.thd_neg = 0
                 self.thd_pos = 1
             else:
-                # unsigned activation is quantized to [0, 2^b-1]
                 self.thd_neg = 0
                 self.thd_pos = 2 ** bit - 1
         else:
@@ -655,7 +618,6 @@ class LsqQuantizer_only_headwise(torch.nn.Module):
                 self.thd_neg = -1
                 self.thd_pos = 1
             else:
-                # signed weight/activation is quantized to [-2^(b-1), 2^(b-1)-1]
                 self.thd_neg = - 2 ** (bit - 1)
                 self.thd_pos = 2 ** (bit - 1) - 1
 
@@ -663,7 +625,6 @@ class LsqQuantizer_only_headwise(torch.nn.Module):
         self.per_channel = per_channel
         self.all_positive = all_positive
         self.learnable = learnable
-        # you need to register the parameter names earlier
         self.register_parameter('s', None)
         self.initialized_alpha = False
 
@@ -676,21 +637,21 @@ class LsqQuantizer_only_headwise(torch.nn.Module):
                 print("check your shape sir")
 
             if self.learnable:
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[1], device=device))
                 self.s.data.copy_(init_val.to(self.s.device))
             else:
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[1], device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(self.s.device))
         else:
             init_val = x.detach().abs().mean() * 2 / (self.thd_pos ** 0.5)
             if self.learnable: 
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device))
                 self.s.data.copy_(init_val.to(device))
             else: 
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
         self.initialized_alpha = True
@@ -740,7 +701,6 @@ class LsqQuantizer4v(torch.nn.Module):
                 self.thd_neg = 0
                 self.thd_pos = 1
             else:
-                # unsigned activation is quantized to [0, 2^b-1]
                 self.thd_neg = 0
                 self.thd_pos = 2 ** bit - 1
         else:
@@ -748,7 +708,6 @@ class LsqQuantizer4v(torch.nn.Module):
                 self.thd_neg = -1
                 self.thd_pos = 1
             else:
-                # signed weight/activation is quantized to [-2^(b-1), 2^(b-1)-1]
                 self.thd_neg = - 2 ** (bit - 1)
                 self.thd_pos = 2 ** (bit - 1) - 1
 
@@ -756,7 +715,6 @@ class LsqQuantizer4v(torch.nn.Module):
         self.per_channel = per_channel
         self.all_positive = all_positive
         self.learnable = learnable
-        # you need to register the parameter names earlier
         self.register_parameter('s', None)
         self.initialized_alpha = False
 
@@ -772,21 +730,21 @@ class LsqQuantizer4v(torch.nn.Module):
                 print("shape is not rights")
                 
             if self.learnable:
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[-1], device=device))
                 self.s.data.copy_(init_val.to(device))
             else:
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(x.shape[-1], device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
         else:
             init_val = x.detach().abs().mean() * 2 / (self.thd_pos ** 0.5)
             if self.learnable: 
-                device = x.device  # Use the same device as input
+                device = x.device  
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device))
                 self.s.data.copy_(init_val.to(device))
             else: 
-                device = x.device  # Use the same device as input
+                device = x.device 
                 self.s = torch.nn.Parameter(torch.zeros(1, device=device),requires_grad=False)
                 self.s.data.copy_(init_val.to(device))
         self.initialized_alpha = True

@@ -3,11 +3,10 @@ import torch.nn as nn
 import math
 import numpy as np
 
-## create 1D mask
 def create_mask(s2, prob):
     raw = torch.zeros((s2,))
-    raw[:int((1-prob) * s2)] = 1.0/(1.0-prob)  # set EXACTLY 30% of the pixels in the mask
-    ridx = torch.randperm(s2)   # a random permutation of the entries
+    raw[:int((1-prob) * s2)] = 1.0/(1.0-prob) 
+    ridx = torch.randperm(s2)  
     return raw[ridx]
 
 def round_pass(x):
@@ -30,10 +29,6 @@ def modify_grad(x, freeze_inds):
 
 
 class TrackOscillation(nn.Module):
-    """
-    This is a wrapper of the int_forward function of a quantizer.
-    It tracks the oscillations in integer domain.
-    """
 
     def __init__(self, momentum=0.01, freeze_threshold=0, use_ema_x_int=True):
         super(TrackOscillation, self).__init__()
@@ -42,14 +37,12 @@ class TrackOscillation(nn.Module):
         self.prev_x_int = None
         self.prev_switch_dir = None
 
-        # Statistics to log
         self.ema_oscillation = None
         self.oscillated_sum = None
         self.total_oscillation = None
         self.iters_since_reset = 0
 
-        # Extra variables for weight freezing
-        self.freeze_threshold = freeze_threshold  # This should be at least 2-3x the momentum value.
+        self.freeze_threshold = freeze_threshold  
         self.use_ema_x_int = use_ema_x_int
         self.frozen = None
         self.frozen_x_int = None
@@ -57,7 +50,6 @@ class TrackOscillation(nn.Module):
 
     def __call__(self, x_int, skip_tracking=False, *args, **kwargs):
        
-        # Apply weight freezing
         if self.frozen is not None:
             x_int = ~self.frozen * x_int + self.frozen * self.frozen_x_int
 
@@ -65,13 +57,11 @@ class TrackOscillation(nn.Module):
             return x_int
 
         with torch.no_grad():
-            # Check if everything is correctly initialized, otherwise do so
+
             self.check_init(x_int)
 
-            # detect difference in x_int  NB we round to avoid int inaccuracies
-            delta_x_int = torch.round(self.prev_x_int - x_int).detach()  # should be {-1, 0, 1}
-            switch_dir = torch.sign(delta_x_int)  # This is {-1, 0, 1} as sign(0) is mapped to 0
-            # binary mask for switching
+            delta_x_int = torch.round(self.prev_x_int - x_int).detach()  
+            switch_dir = torch.sign(delta_x_int) 
             switched = delta_x_int != 0
 
             oscillated = (self.prev_switch_dir * switch_dir) == -1
@@ -79,20 +69,17 @@ class TrackOscillation(nn.Module):
                 self.momentum * oscillated + (1 - self.momentum) * self.ema_oscillation
             )
 
-            # Update prev_switch_dir for the switch variables
             self.prev_switch_dir[switched] = switch_dir[switched]
             self.prev_x_int = x_int
             self.oscillated_sum = oscillated.sum()
             self.total_oscillation += oscillated
             self.iters_since_reset += 1
 
-            # Freeze some weights
             if self.freeze_threshold > 0:
                 freeze_weights = self.ema_oscillation > self.freeze_threshold
-                self.frozen[freeze_weights] = True  # Set them to frozen
+                self.frozen[freeze_weights] = True  
                 if self.use_ema_x_int:
                     self.frozen_x_int[freeze_weights] = torch.round(self.ema_x_int[freeze_weights])
-                    # Update x_int EMA which can be used for freezing
                     self.ema_x_int = self.momentum * x_int + (1 - self.momentum) * self.ema_x_int
                 else:
                     self.frozen_x_int[freeze_weights] = x_int[freeze_weights]
@@ -101,9 +88,8 @@ class TrackOscillation(nn.Module):
 
     def check_init(self, x_int):
         if self.prev_x_int is None:
-            # Init prev switch dir to 0
             self.prev_switch_dir = torch.zeros_like(x_int)
-            self.prev_x_int = x_int.detach()  # Not sure if needed, don't think so
+            self.prev_x_int = x_int.detach()  
             self.ema_oscillation = torch.zeros_like(x_int)
             self.oscillated_sum = 0
             self.total_oscillation = torch.zeros_like(x_int)
@@ -112,7 +98,6 @@ class TrackOscillation(nn.Module):
                 self.prev_x_int.shape == x_int.shape
             ), "Tracking shape does not match current tensor shape."
 
-        # For weight freezing
         if self.frozen is None and self.freeze_threshold > 0:
             self.frozen = torch.zeros_like(x_int, dtype=torch.bool)
             self.frozen_x_int = torch.zeros_like(x_int)
@@ -135,9 +120,9 @@ class StatsQuantizer(nn.Module):
         real_weights = weight
 
         if len(weight.shape) == 2:
-            scaling_factor = 2 * torch.mean(abs(real_weights),dim=1,keepdim=True) # dim, 1
+            scaling_factor = 2 * torch.mean(abs(real_weights),dim=1,keepdim=True) 
         elif len(weight.shape) == 3:
-            scaling_factor = 2 * torch.mean(torch.mean(abs(real_weights),dim=-1,keepdim=True),dim=0,keepdim=True) # 1, dim, 1
+            scaling_factor = 2 * torch.mean(torch.mean(abs(real_weights),dim=-1,keepdim=True),dim=0,keepdim=True)
 
         scaling_factor = scaling_factor.detach()
         self.s = scaling_factor.squeeze().cpu()
@@ -166,9 +151,9 @@ class StatsQuantizer_specific_4_qkreparam_cga(nn.Module):
         real_weights = weight
 
         if len(weight.shape) == 2:
-            scaling_factor = 2 * torch.mean(abs(real_weights),dim=1,keepdim=True) # dim, 1
+            scaling_factor = 2 * torch.mean(abs(real_weights),dim=1,keepdim=True) 
         elif len(weight.shape) == 3:
-            scaling_factor = 2 * torch.mean(torch.mean(abs(real_weights),dim=-1,keepdim=True),dim=0,keepdim=True) # 1, dim, 1
+            scaling_factor = 2 * torch.mean(torch.mean(abs(real_weights),dim=-1,keepdim=True),dim=0,keepdim=True) 
 
         
         scaling_factor = scaling_factor.detach()
@@ -180,8 +165,8 @@ class StatsQuantizer_specific_4_qkreparam_cga(nn.Module):
         
         if self.training:
             not_freeze_idx = torch.zeros_like(real_weights, device=real_weights.device)
-            for i in np.arange(start=-(2**(self.num_bits - 1)),stop=(2**(self.num_bits - 1) - 1)): # 0.5 - boundaryRange < x < 0.5 + boundaryRange
-                within_boundary = ((b4_round - i) <= (0.5 + self.boundaryRange)) *  ((b4_round - i) >= (0.5 - self.boundaryRange)) #idx of # 0.5 - boundaryRange < x < 0.5 + boundaryRange
+            for i in np.arange(start=-(2**(self.num_bits - 1)),stop=(2**(self.num_bits - 1) - 1)):
+                within_boundary = ((b4_round - i) <= (0.5 + self.boundaryRange)) *  ((b4_round - i) >= (0.5 - self.boundaryRange)) 
                 not_freeze_idx  = not_freeze_idx + within_boundary.float()
             
             freeze_idx = 1.0-not_freeze_idx
@@ -193,7 +178,7 @@ class StatsQuantizer_specific_4_qkreparam_cga(nn.Module):
         return quan_weights
     
 
-class StatsQuantizer_4d(nn.Module): # B, num_heads, N, in_features
+class StatsQuantizer_4d(nn.Module): 
     def __init__(self, num_bits, clip_learnable):
         super(StatsQuantizer_4d, self).__init__()
 

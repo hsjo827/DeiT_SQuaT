@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Training script for CIFAR-100 with OFQ + SQuaT (DeiT-Small, W4A4: 4-bit weight, 4-bit activation)
+# Training script for CIFAR-100 with SQuaT (DeiT-Small, W4A4: 4-bit weight, 4-bit activation)
 
 CONFIG_FILE="configs/cifar100_deit_tiny_squat.yml"
 DATA_DIR="./data/CIFAR100"

@@ -27,18 +27,14 @@ class DistilledVisionTransformer(VisionTransformer):
         self.head_dist.apply(self._init_weights)
     
     def reset_classifier(self, num_classes, global_pool=''):
-        """Override to ensure head_dist is also reset"""
         super().reset_classifier(num_classes, global_pool)
-        # Ensure head_dist is reset for DistilledVisionTransformer
         if self.head_dist is not None:
             self.head_dist = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
     def forward_features(self, x, is_feat=False, quant_params=None):
-        # Use parent's forward_features which includes SQuaT support
         return super().forward_features(x, is_feat=is_feat, quant_params=quant_params)
 
     def forward(self, x, is_feat=False, quant_params=None):
-        # Use parent's forward which includes SQuaT support
         return super().forward(x, is_feat=is_feat, quant_params=quant_params)
 
 
@@ -46,11 +42,8 @@ class DistilledVisionTransformer(VisionTransformer):
 
 @register_model
 def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
-    # Save target num_classes before loading pretrained
     target_num_classes = kwargs.get('num_classes', 1000)
     
-    # Filter out timm-specific arguments that VisionTransformer doesn't accept
-    # (e.g., pretrained_cfg, pretrained_cfg_overlay)
     model_kwargs = {k: v for k, v in kwargs.items() 
                     if k not in ['pretrained_cfg', 'pretrained_cfg_overlay']}
     model_kwargs['num_classes'] = 1000
@@ -59,7 +52,6 @@ def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
         norm_layer=partial(nn.LayerNorm, eps=1e-6), act_layer= nn.GELU, **model_kwargs)
     model.default_cfg = _cfg()
     
-    # Load ImageNet pretrained weights
     if pretrained:
         checkpoint = torch.hub.load_state_dict_from_url(
             url="https://dl.fbaipublicfiles.com/deit/deit_tiny_distilled_patch16_224-b40b3cf7.pth",
@@ -68,7 +60,6 @@ def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
         print("Loading ImageNet pretrained weights")
         model.load_state_dict(checkpoint["model"], strict=False)
     
-    # Reset classifier head for target num_classes if different from 1000
     if target_num_classes != 1000:
         model.reset_classifier(target_num_classes)
     
@@ -76,11 +67,8 @@ def deit_tiny_distilled_patch16_224(pretrained=False, **kwargs):
 
 @register_model
 def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
-    # Save target num_classes before loading pretrained
     target_num_classes = kwargs.get('num_classes', 1000)
     
-    # Filter out timm-specific arguments that VisionTransformer doesn't accept
-    # (e.g., pretrained_cfg, pretrained_cfg_overlay)
     model_kwargs = {k: v for k, v in kwargs.items() 
                     if k not in ['pretrained_cfg', 'pretrained_cfg_overlay']}
     model_kwargs['num_classes'] = 1000
@@ -89,7 +77,6 @@ def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
         norm_layer=partial(nn.LayerNorm, eps=1e-6), act_layer= nn.GELU, **model_kwargs)
     model.default_cfg = _cfg()
     
-    # Load ImageNet pretrained weights
     if pretrained:
         checkpoint = torch.hub.load_state_dict_from_url(
             url="https://dl.fbaipublicfiles.com/deit/deit_small_distilled_patch16_224-649709d9.pth",
@@ -98,7 +85,6 @@ def deit_small_distilled_patch16_224(pretrained=False, **kwargs):
         print("Loading ImageNet pretrained weights")
         model.load_state_dict(checkpoint["model"], strict=False)
     
-    # Reset classifier head for target num_classes if different from 1000
     if target_num_classes != 1000:
         model.reset_classifier(target_num_classes)
     

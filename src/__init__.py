@@ -1,3 +1,1 @@
-# OFQ_SQuaT package
-
 
