@@ -2,7 +2,7 @@
 
 # Training script for CIFAR-100 with SQuaT (DeiT-Small, W3A3: 3-bit weight, 3-bit activation)
 
-CONFIG_FILE="configs/cifar100_deit_tiny_squat.yml"
+CONFIG_FILE="configs/cifar100_deit_small_squat.yml"
 DATA_DIR="./data/CIFAR100"
 
 python train_squat.py \

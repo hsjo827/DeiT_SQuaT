@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# Training script for CIFAR-100 with SQuaT (DeiT-Small, W4A4: 4-bit weight, 4-bit activation)
+# Training script for CIFAR-10 with SQuaT (DeiT-Small, W4A4: 4-bit weight, 4-bit activation)
 
-CONFIG_FILE="configs/cifar100_deit_small_squat.yml"
-DATA_DIR="./data/CIFAR100"
+CONFIG_FILE="configs/cifar10_deit_small_squat.yml"
+DATA_DIR="./data/CIFAR10"
 
 python train_squat.py \
     --config ${CONFIG_FILE} \
     ${DATA_DIR} \
-    --dataset torch/cifar100 \
+    --dataset torch/cifar10 \
     --model deit_small_distilled_patch16_224 \
-    --num-classes 100 \
+    --num-classes 10 \
     --img-size 224 \
     --batch-size 128 \
     --epochs 300 \
